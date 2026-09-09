@@ -5,7 +5,7 @@ import traceback
 
 from typing import TypedDict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -16,15 +16,9 @@ from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 
-# ==========================================
+# ============================================================
 # 1. LLM INITIALIZATION
-# ==========================================
-
-# Get Gemini API key from environment variable.
-# On Render, add:
-#
-# GEMINI_API_KEY = your_api_key
-#
+# ============================================================
 
 api_key = os.getenv("GEMINI_API_KEY")
 
@@ -33,8 +27,6 @@ if not api_key:
         "GEMINI_API_KEY environment variable is not configured."
     )
 
-
-# Initialize Gemini
 llm_flash = ChatGoogleGenerativeAI(
     model="gemini-3.1-flash-lite",
     google_api_key=api_key
@@ -43,55 +35,48 @@ llm_flash = ChatGoogleGenerativeAI(
 llm = llm_flash
 
 
-# ==========================================
-# 2. FASTAPI INITIALIZATION
-# ==========================================
+# ============================================================
+# 2. FASTAPI
+# ============================================================
 
 app = FastAPI(
-    title="LAN GRPAH - AI Coding Agent",
-    description="LangGraph based Developer and Tester workflow",
+    title="LAN GRPAH",
+    description="LangGraph AI Developer and Tester",
     version="1.0.0"
 )
 
 
-# ==========================================
+# ============================================================
 # 3. STATE DEFINITION
-# ==========================================
+# ============================================================
 
 class CrewState(TypedDict):
-
     messages: List[BaseMessage]
-
     next_step: Optional[str]
-
     code: Optional[str]
-
     report: Optional[str]
 
 
-# ==========================================
+# ============================================================
 # 4. API REQUEST MODEL
-# ==========================================
+# ============================================================
 
 class TaskRequest(BaseModel):
-
     task: str
 
 
-# ==========================================
+# ============================================================
 # 5. TOOLS
-# ==========================================
+# ============================================================
 
 @tool
 def run_python_code(code: str) -> str:
-
     """
-    Execute python code and return the
-    standard output or error trace.
+    Execute Python code and return standard output
+    or an error trace.
     """
 
     if not isinstance(code, str):
-
         code = str(code)
 
     clean_code = (
@@ -102,13 +87,11 @@ def run_python_code(code: str) -> str:
     )
 
     old_stdout = sys.stdout
-
     new_stdout = io.StringIO()
 
     sys.stdout = new_stdout
 
     try:
-
         local_scope = {}
 
         exec(
@@ -120,14 +103,12 @@ def run_python_code(code: str) -> str:
         result = new_stdout.getvalue()
 
     except Exception:
-
         result = (
             "Execution Error:\n"
             + traceback.format_exc()
         )
 
     finally:
-
         sys.stdout = old_stdout
 
     return (
@@ -137,56 +118,62 @@ def run_python_code(code: str) -> str:
     )
 
 
-# ==========================================
+# ============================================================
 # TEST CASE GENERATOR
-# ==========================================
+# ============================================================
 
 @tool
 def generate_test_cases(task_description: str) -> str:
-
     """
-    Generate specific test scenarios
-    for a given coding task.
+    Generate specific test scenarios for a coding task.
     """
 
-    prompt = (
+    prompt = f"""
+You are a Senior QA Engineer.
 
-        "You are a Senior QA Engineer. "
+Generate 3 to 5 highly specific test scenarios
+for the following coding task:
 
-        "Generate 3 to 5 highly specific "
-        "test scenarios for the following "
-        "coding task:\n\n"
+{task_description}
 
-        f"{task_description}\n\n"
+Include:
+- Standard cases
+- Edge cases
+- Boundary cases
+- Invalid input cases where relevant
 
-        "Include standard cases and edge cases. "
-
-        "Return them as a numbered list."
-
-    )
+Return them as a numbered list.
+"""
 
     response = llm.invoke(prompt)
 
-    return (
-        response.content
-        if hasattr(response, "content")
-        else str(response)
-    )
+    content = response.content
+
+    if isinstance(content, list):
+
+        parts = []
+
+        for item in content:
+
+            if isinstance(item, dict):
+                parts.append(
+                    item.get("text", "")
+                )
+            else:
+                parts.append(str(item))
+
+        return "\n".join(
+            p for p in parts if p
+        )
+
+    return str(content)
 
 
-# ==========================================
-# 6. GRAPH NODES
-# ==========================================
+# ============================================================
+# 6. TASK INPUT NODE
+# ============================================================
 
 def task_input_node(state: CrewState):
-
-    """
-    Original interactive task input node.
-
-    This is kept for compatibility with
-    the original workflow, although Render
-    uses the /run-task API instead.
-    """
 
     print("\n" + "=" * 50)
 
@@ -204,21 +191,18 @@ def task_input_node(state: CrewState):
         }
 
     return {
-
         "messages": [
             HumanMessage(
                 content=user_task
             )
         ],
-
         "next_step": "developer"
-
     }
 
 
-# ==========================================
-# DEVELOPER NODE
-# ==========================================
+# ============================================================
+# 7. DEVELOPER NODE
+# ============================================================
 
 def real_time_developer(state: CrewState):
 
@@ -227,41 +211,33 @@ def real_time_developer(state: CrewState):
         "Writing dynamic code using LLM..."
     )
 
-    # Get latest task
     task = state["messages"][-1].content
 
     dev_prompt = f"""
-You are a Python Developer.
+You are a Senior Python Developer.
 
-Write a clean Python script to solve this:
+Write a clean Python script to solve this coding task:
 
 {task}
 
 Requirements:
-- Return only Python code.
+
+- Return ONLY Python code.
 - No explanation.
 - No Markdown.
-- Do not use ```python.
+- Do not include ```python.
+- The code must be executable.
 """
 
-    # Check LLM
-    if llm_flash is None:
-
-        raise ValueError(
-            "LLM is not initialized."
-        )
-
-    # Call Gemini
     response = llm_flash.invoke(
         dev_prompt
     )
 
-    # Safely parse Gemini response
     content = response.content
 
     if isinstance(content, list):
 
-        code_parts = []
+        parts = []
 
         for item in content:
 
@@ -273,24 +249,20 @@ Requirements:
                 )
 
                 if text:
-                    code_parts.append(text)
+                    parts.append(text)
 
             else:
 
-                code_parts.append(
+                parts.append(
                     str(item)
                 )
 
-        code_str = "\n".join(
-            code_parts
-        )
+        code_str = "\n".join(parts)
 
     else:
 
         code_str = str(content)
 
-    # Remove Markdown fences if Gemini
-    # accidentally returns them
     code_str = (
         code_str
         .replace("```python", "")
@@ -301,15 +273,13 @@ Requirements:
     print(code_str)
 
     return {
-
         "code": code_str
-
     }
 
 
-# ==========================================
-# TESTER NODE
-# ==========================================
+# ============================================================
+# 8. TESTER NODE
+# ============================================================
 
 def real_time_tester(state: CrewState):
 
@@ -319,83 +289,38 @@ def real_time_tester(state: CrewState):
         "and executing code..."
     )
 
-    # Get task
     task = state["messages"][-1].content
 
-    # ======================================
-    # Generate test cases
-    # ======================================
-
+    # Generate tests
     test_cases = generate_test_cases.invoke(
         task
     )
 
-    content = test_cases
+    cases_str = str(test_cases)
 
-    if isinstance(content, list):
-
-        cases_parts = []
-
-        for item in content:
-
-            if isinstance(item, dict):
-
-                text = item.get(
-                    "text",
-                    ""
-                )
-
-                if text:
-                    cases_parts.append(
-                        text
-                    )
-
-            else:
-
-                cases_parts.append(
-                    str(item)
-                )
-
-        cases_str = "\n".join(
-            cases_parts
-        )
-
-    else:
-
-        cases_str = str(content)
-
-    # ======================================
     # Execute generated code
-    # ======================================
-
     execution_result = run_python_code.invoke(
         {
             "code": state["code"]
         }
     )
 
-    # ======================================
     # Compile report
-    # ======================================
-
     report = (
         "### EXECUTION OUTPUT:\n"
         f"{execution_result}\n\n"
-
         "### TEST SCENARIOS EVALUATED:\n"
         f"{cases_str}"
     )
 
     return {
-
         "report": report
-
     }
 
 
-# ==========================================
-# MANAGER DECISION NODE
-# ==========================================
+# ============================================================
+# 9. MANAGER NODE
+# ============================================================
 
 def manager_decision_node(state: CrewState):
 
@@ -425,16 +350,14 @@ def manager_decision_node(state: CrewState):
             "next_step": "archiver"
         }
 
-    else:
-
-        return {
-            "next_step": "task_input"
-        }
+    return {
+        "next_step": "task_input"
+    }
 
 
-# ==========================================
-# ARCHIVER NODE
-# ==========================================
+# ============================================================
+# 10. ARCHIVER NODE
+# ============================================================
 
 def archiver_node(state: CrewState):
 
@@ -445,52 +368,17 @@ def archiver_node(state: CrewState):
     )
 
     return {
-
         "next_step": "exit"
-
     }
 
 
-# ==========================================
-# 7. GRAPH CONSTRUCTION
-# ==========================================
-# ==========================================
-# API WORKFLOW
-# ==========================================
+# ============================================================
+# 11. ORIGINAL INTERACTIVE WORKFLOW
+# ============================================================
 
-api_workflow = StateGraph(CrewState)
-
-api_workflow.add_node(
-    "developer",
-    real_time_developer
+rt_workflow = StateGraph(
+    CrewState
 )
-
-api_workflow.add_node(
-    "tester",
-    real_time_tester
-)
-
-api_workflow.add_edge(
-    START,
-    "developer"
-)
-
-api_workflow.add_edge(
-    "developer",
-    "tester"
-)
-
-api_workflow.add_edge(
-    "tester",
-    END
-)
-
-api_app = api_workflow.compile()
-
-
-# ==========================================
-# Add Nodes
-# ==========================================
 
 rt_workflow.add_node(
     "task_input",
@@ -518,9 +406,7 @@ rt_workflow.add_node(
 )
 
 
-# ==========================================
-# START → TASK INPUT
-# ==========================================
+# START → task_input
 
 rt_workflow.add_edge(
     START,
@@ -528,16 +414,9 @@ rt_workflow.add_edge(
 )
 
 
-# ==========================================
-# ROUTING FROM TASK INPUT
-# ==========================================
-
 def route_from_input(state: CrewState):
 
-    if state.get(
-        "next_step"
-    ) == "exit":
-
+    if state.get("next_step") == "exit":
         return END
 
     return "developer"
@@ -549,24 +428,21 @@ rt_workflow.add_conditional_edges(
 )
 
 
-# ==========================================
-# SEQUENTIAL FLOW
-# ==========================================
+# developer → tester
 
 rt_workflow.add_edge(
     "developer",
     "tester"
 )
 
+
+# tester → manager
+
 rt_workflow.add_edge(
     "tester",
     "manager_decision"
 )
 
-
-# ==========================================
-# MANAGER ROUTING
-# ==========================================
 
 def route_from_decision(
     state: CrewState
@@ -587,9 +463,7 @@ rt_workflow.add_conditional_edges(
 )
 
 
-# ==========================================
-# ARCHIVER → END
-# ==========================================
+# archiver → END
 
 rt_workflow.add_edge(
     "archiver",
@@ -597,55 +471,97 @@ rt_workflow.add_edge(
 )
 
 
-# ==========================================
-# COMPILE LANGGRAPH
-# ==========================================
+# Compile original workflow
 
 rt_app = rt_workflow.compile()
 
 
-print(
-    "LangGraph workflow compiled successfully."
+# ============================================================
+# 12. API WORKFLOW
+# ============================================================
+
+# This workflow is separate from the
+# interactive terminal workflow.
+
+api_workflow = StateGraph(
+    CrewState
+)
+
+api_workflow.add_node(
+    "developer",
+    real_time_developer
+)
+
+api_workflow.add_node(
+    "tester",
+    real_time_tester
 )
 
 
-# ==========================================
-# 8. FASTAPI ROUTES
-# ==========================================
+# API START → developer
+
+api_workflow.add_edge(
+    START,
+    "developer"
+)
+
+
+# developer → tester
+
+api_workflow.add_edge(
+    "developer",
+    "tester"
+)
+
+
+# tester → END
+
+api_workflow.add_edge(
+    "tester",
+    END
+)
+
+
+# Compile API workflow
+
+api_app = api_workflow.compile()
+
+
+print(
+    "LangGraph workflows compiled successfully."
+)
+
+
+# ============================================================
+# 13. FASTAPI ROUTES
+# ============================================================
 
 @app.get("/")
 def home():
 
     return {
-
         "status": "online",
-
         "application": "LAN GRPAH",
-
         "service": "AI Coding Agent",
-
         "message": "LangGraph API is running."
-
     }
 
 
-# ==========================================
+# ============================================================
 # HEALTH CHECK
-# ==========================================
+# ============================================================
 
 @app.get("/health")
 def health():
 
     return {
-
         "status": "healthy"
-
     }
 
 
-# ==========================================
+# ============================================================
 # RUN CODING TASK
-# ==========================================
+# ============================================================
 
 @app.post("/run-task")
 def run_task(
@@ -656,12 +572,10 @@ def run_task(
 
     if not task:
 
-        return {
-
-            "error":
-            "Task cannot be empty."
-
-        }
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be empty."
+        )
 
     print("\n" + "=" * 50)
 
@@ -674,18 +588,14 @@ def run_task(
     print("=" * 50)
 
 
-    # ======================================
-    # Initial State
-    # ======================================
+    # Initial LangGraph state
 
     initial_state: CrewState = {
 
         "messages": [
-
             HumanMessage(
                 content=task
             )
-
         ],
 
         "next_step": "developer",
@@ -693,46 +603,32 @@ def run_task(
         "code": None,
 
         "report": None
-
     }
 
 
     try:
 
-        # ==================================
-        # Run only Developer → Tester
-        # ==================================
+        # Run API-specific workflow
 
         result = api_app.invoke(
-
             initial_state,
-
             config={
                 "recursion_limit": 50
-            },
-
-            # Start from developer
-            # because API already supplies
-            # the task.
+            }
         )
 
 
         return {
-
             "status": "success",
-
             "task": task,
-
             "code": result.get(
                 "code",
                 ""
             ),
-
             "report": result.get(
                 "report",
                 ""
             )
-
         }
 
 
@@ -743,21 +639,15 @@ def run_task(
             + traceback.format_exc()
         )
 
-        return {
-
-            "status": "error",
-
-            "message": str(e),
-
-            "traceback":
-                traceback.format_exc()
-
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
-# ==========================================
-# 9. LOCAL / RENDER SERVER
-# ==========================================
+# ============================================================
+# 14. SERVER
+# ============================================================
 
 if __name__ == "__main__":
 
@@ -771,11 +661,7 @@ if __name__ == "__main__":
     )
 
     uvicorn.run(
-
         "lang:app",
-
         host="0.0.0.0",
-
         port=port
-
     )
