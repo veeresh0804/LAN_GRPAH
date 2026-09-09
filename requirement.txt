@@ -1,7 +1,7 @@
-uvicorn
 fastapi
+uvicorn
 langchain-google-genai
 langchain-core
 langgraph
-google-generativeai
 pydantic
+google-generativeai
