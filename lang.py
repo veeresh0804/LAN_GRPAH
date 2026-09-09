@@ -15,6 +15,286 @@ from langgraph.graph import StateGraph, START, END
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+# ============================================================
+# LANGGRAPH PLAYGROUND
+# ============================================================
+
+@app.get("/agent/playground")
+def agent_playground():
+
+    return """
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+    <title>LAN GRPAH - Agent Playground</title>
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <style>
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #0f1117;
+            color: #ffffff;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #9ca3af;
+            margin-bottom: 30px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 15px;
+            box-sizing: border-box;
+            background: #181b23;
+            color: white;
+            border: 1px solid #343946;
+            border-radius: 8px;
+            font-size: 15px;
+            resize: vertical;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 7px;
+            background: #2563eb;
+            color: white;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+        }
+
+        .section {
+            margin-top: 25px;
+        }
+
+        .section h2 {
+            font-size: 18px;
+        }
+
+        pre {
+            background: #181b23;
+            border: 1px solid #343946;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+
+        .status {
+            margin-top: 15px;
+            color: #9ca3af;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+    <h1>LAN GRPAH</h1>
+
+    <div class="subtitle">
+        LangGraph AI Developer & Tester Playground
+    </div>
+
+
+    <div class="section">
+
+        <h2>Enter Coding Task</h2>
+
+        <textarea
+            id="task"
+            placeholder="Example: Write a Python program to check whether a number is prime..."
+        ></textarea>
+
+        <br>
+
+        <button
+            id="runButton"
+            onclick="runAgent()"
+        >
+            Run Agent
+        </button>
+
+        <div
+            id="status"
+            class="status"
+        ></div>
+
+    </div>
+
+
+    <div class="section">
+
+        <h2>Generated Code</h2>
+
+        <pre id="code">Waiting for agent...</pre>
+
+    </div>
+
+
+    <div class="section">
+
+        <h2>Agent Report</h2>
+
+        <pre id="report">Waiting for agent...</pre>
+
+    </div>
+
+</div>
+
+
+<script>
+
+async function runAgent() {
+
+    const task =
+        document.getElementById("task").value.trim();
+
+    const button =
+        document.getElementById("runButton");
+
+    const status =
+        document.getElementById("status");
+
+    const code =
+        document.getElementById("code");
+
+    const report =
+        document.getElementById("report");
+
+
+    if (!task) {
+
+        alert("Please enter a coding task.");
+
+        return;
+    }
+
+
+    button.disabled = true;
+
+    button.innerText = "Running Agent...";
+
+    status.innerText =
+        "Developer → Tester → Report";
+
+
+    code.innerText =
+        "Generating code...";
+
+    report.innerText =
+        "Running LangGraph...";
+
+
+    try {
+
+        const response = await fetch(
+            "/run-task",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body: JSON.stringify({
+                    task: task
+                })
+            }
+        );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Agent execution failed."
+            );
+        }
+
+
+        code.innerText =
+            data.code || "No code generated.";
+
+
+        report.innerText =
+            data.report || "No report generated.";
+
+
+        status.innerText =
+            "Agent completed successfully.";
+
+    }
+
+    catch (error) {
+
+        status.innerText =
+            "Agent execution failed.";
+
+        code.innerText =
+            "Error";
+
+        report.innerText =
+            error.message;
+
+    }
+
+    finally {
+
+        button.disabled = false;
+
+        button.innerText =
+            "Run Agent";
+
+    }
+
+}
+
+</script>
+
+
+</body>
+
+</html>
+"""
 
 # ============================================================
 # 1. LLM INITIALIZATION
@@ -70,7 +350,7 @@ class TaskRequest(BaseModel):
 # ============================================================
 
 @tool
-def run_python_code(code: str) -> str:
+def _python_code(code: str) -> str:
     """
     Execute Python code and return standard output
     or an error trace.
